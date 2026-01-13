@@ -1,0 +1,1 @@
+https://github.com/fossology/fossology/compare/master...sakirr05:fossology:sakirr05/fix/scanoptions-multipart-array?expand=1
