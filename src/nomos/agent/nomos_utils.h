@@ -54,6 +54,7 @@ void processFile(char *fileToScan);
 int recordScanToDB(cacheroot_t *pcroot, struct curScan *scanRecord);
 long get_rfpk(cacheroot_t *pcroot, char *rf_shortname);
 char convertIndexToHighlightType(int index);
+char* normalizeLicenseNameForSpdx(const char *licenseName, char *normalized, size_t maxLen);
 long add2license_ref(char *licenseName);
 long updateLicenseFile(long rfPk);
 int updateLicenseHighlighting(cacheroot_t *pcroot);

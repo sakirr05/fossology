@@ -24,10 +24,106 @@ sem_t* mutexJson;
 gboolean* printcomma;
 char saveLics[myBUFSIZ];
 
+#define SPDXREF_PREFIX "LicenseRef-"
+#define SPDXREF_PREFIX_FOSSOLOGY "LicenseRef-fossology-"
+
+/**
+ \brief Normalize license name to be SPDX compliant
+
+ Normalizes a license name to follow SPDX identifier rules:
+ - Replaces spaces with hyphens
+ - Replaces trailing '+' with '-or-later'
+ - Adds LicenseRef-fossology- prefix if not already a LicenseRef
+ - Sanitizes invalid characters (keeps only alphanumeric, dots, hyphens, plus)
+
+ @param  licenseName Original license name (will be modified in place)
+ @param  normalized  Output buffer for normalized name
+ @param  maxLen      Maximum length of normalized buffer
+
+ @return Pointer to normalized string, or NULL on error
+ */
+FUNCTION char* normalizeLicenseNameForSpdx(const char *licenseName, char *normalized, size_t maxLen)
+{
+  if (!licenseName || !normalized || maxLen == 0) {
+    return NULL;
+  }
+
+  size_t len = strlen(licenseName);
+  if (len == 0) {
+    normalized[0] = '\0';
+    return normalized;
+  }
+
+  char *out = normalized;
+  size_t outLen = 0;
+  const char *in = licenseName;
+  int needsPrefix = 1;
+  size_t prefixLen = 0;
+
+  /* Check if already starts with LicenseRef- */
+  if (strncmp(in, SPDXREF_PREFIX, strlen(SPDXREF_PREFIX)) == 0) {
+    needsPrefix = 0;
+    prefixLen = strlen(SPDXREF_PREFIX);
+  }
+
+  /* Add prefix if needed */
+  if (needsPrefix) {
+    prefixLen = strlen(SPDXREF_PREFIX_FOSSOLOGY);
+    if (prefixLen >= maxLen - 1) {
+      return NULL;
+    }
+    strncpy(out, SPDXREF_PREFIX_FOSSOLOGY, prefixLen);
+    out += prefixLen;
+    outLen += prefixLen;
+  } else {
+    /* Copy existing LicenseRef- prefix */
+    if (prefixLen >= maxLen - 1) {
+      return NULL;
+    }
+    strncpy(out, in, prefixLen);
+    out += prefixLen;
+    in += prefixLen;
+    outLen += prefixLen;
+    len -= prefixLen;
+  }
+
+  /* Process remaining characters */
+  for (size_t i = 0; i < len && outLen < maxLen - 1; i++, in++) {
+    char c = *in;
+    /* Allow: alphanumeric, dots, hyphens, plus (but handle plus specially) */
+    if (isalnum((unsigned char)c) || c == '.' || c == '-' || c == '+') {
+      *out++ = c;
+      outLen++;
+    } else if (c == ' ') {
+      /* Replace spaces with hyphens */
+      *out++ = '-';
+      outLen++;
+    }
+    /* Skip other characters */
+  }
+
+  /* Replace trailing '+' with '-or-later' */
+  if (outLen > 0 && normalized[outLen - 1] == '+') {
+    outLen--;  /* Remove the '+' */
+    if (outLen + 9 < maxLen - 1) {  /* "-or-later" is 9 chars */
+      strcpy(normalized + outLen, "-or-later");
+      outLen += 9;
+    } else {
+      /* Not enough space, just remove the '+' */
+      normalized[outLen] = '\0';
+    }
+  } else {
+    normalized[outLen] = '\0';
+  }
+
+  return normalized;
+}
+
 /**
  \brief Add a new license to license_ref table
 
- Adds a license to license_ref table.
+ Adds a license to license_ref table. License names are normalized to be
+ SPDX compliant before insertion.
 
  @param  licenseName Name of license
 
@@ -40,6 +136,7 @@ FUNCTION long add2license_ref(char *licenseName)
   char query[myBUFSIZ];
   char insert[myBUFSIZ];
   char escLicName[myBUFSIZ];
+  char normalizedName[myBUFSIZ];
   char *specialLicenseText;
   long rf_pk;
 
@@ -47,11 +144,24 @@ FUNCTION long add2license_ref(char *licenseName)
   int error;
   int numRows;
 
-  // escape the name
-  len = strlen(licenseName);
-  PQescapeStringConn(gl.pgConn, escLicName, licenseName, len, &error);
+  /* Normalize license name to be SPDX compliant */
+  if (!normalizeLicenseNameForSpdx(licenseName, normalizedName, sizeof(normalizedName))) {
+    printf("ERROR: %s(%d): Failed to normalize license name: %s\n",
+           __FILE__, __LINE__, licenseName);
+    return 0;
+  }
+
+  /* Log if name was changed */
+  if (strcmp(licenseName, normalizedName) != 0) {
+    printf("INFO: %s(%d): License name normalized from '%s' to '%s' for SPDX compliance\n",
+           __FILE__, __LINE__, licenseName, normalizedName);
+  }
+
+  // escape the normalized name
+  len = strlen(normalizedName);
+  PQescapeStringConn(gl.pgConn, escLicName, normalizedName, len, &error);
   if (error)
-  LOG_WARNING("Does license name %s have multibyte encoding?", licenseName)
+    LOG_WARNING("Does license name %s have multibyte encoding?", normalizedName)
 
   /* verify the license is not already in the table */
   snprintf(query, myBUFSIZ - 1, "SELECT rf_pk FROM " LICENSE_REF_TABLE " where rf_shortname='%s'", escLicName);
